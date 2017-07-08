@@ -1,5 +1,6 @@
 /*
  * slam_gmapping
+ * Copyright (c) 2017, Open Source Robotics Foundation, Inc.
  * Copyright (c) 2008, Willow Garage, Inc.
  * Copyright (c) 2017, Open Source Robotics Foundation, Inc.
  *
@@ -110,6 +111,8 @@ Initial map dimensions and resolution:
 
 /* #include <rosbag/bag.h> */
 /* #include <rosbag/view.h> */
+/* #include <boost/foreach.hpp> */
+/* #define foreach BOOST_FOREACH */
 
 // compute linear index for given map coords
 #define MAP_IDX(sx, i, j) ((sx) * (j) + (i))
@@ -705,7 +708,6 @@ SlamGMapping::updateMap(const std::shared_ptr<sensor_msgs::msg::LaserScan> scan)
   center.y=(ymin_ + ymax_) / 2.0;
 
   GMapping::ScanMatcherMap smap(center, xmin_, ymin_, xmax_, ymax_, delta_);
-
   RCUTILS_LOG_DEBUG("Trajectory tree:\n");
   for(auto n = best.node; n; n = n->parent) {
     RCUTILS_LOG_DEBUG("  %.3f %.3f %.3f\n",

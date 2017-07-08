@@ -40,6 +40,7 @@ install(
   TARGETS slam_gmapping
   DESTINATION lib/${PROJECT_NAME}
 )
+
 # add_executable(slam_gmapping_replay src/slam_gmapping.cpp src/replay.cpp)
 # ament_target_dependencies(slam_gmapping_replay ${req_deps})
 
