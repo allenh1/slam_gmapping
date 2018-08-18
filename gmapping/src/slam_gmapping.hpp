@@ -84,12 +84,12 @@ private:
   rclcpp::Service<nav_msgs::srv::GetMap>::SharedPtr ss_;
   rclcpp::TimeSource timesource;
   rclcpp::Clock::SharedPtr clock;
-  tf2_ros::Buffer * buffer = nullptr;
-  tf2_ros::TransformListener * tf_ = nullptr;
+  std::unique_ptr<tf2_ros::Buffer> buffer = nullptr;
+  std::unique_ptr<tf2_ros::TransformListener> tf_ = nullptr;
   /* message_filters::Subscriber<sensor_msgs::LaserScan>* scan_filter_sub_; */
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_filter_sub_;
   /* tf2_ros::MessageFilter<sensor_msgs::msg::LaserScan> * scan_filter_; */
-  tf2_ros::TransformBroadcaster * tfB_ = nullptr;
+  std::unique_ptr<tf2_ros::TransformBroadcaster> tfB_ = nullptr;
 
   GMapping::GridSlamProcessor* gsp_ = nullptr;
   GMapping::RangeSensor* gsp_laser_ = nullptr;
@@ -102,7 +102,7 @@ private:
   // We might need to change the order of the scan
   bool do_reverse_range_;
   unsigned int gsp_laser_beam_count_;
-  GMapping::OdometrySensor* gsp_odom_ = nullptr;
+  std::unique_ptr<GMapping::OdometrySensor> gsp_odom_ = nullptr;
 
   bool got_first_scan_ = false;
   bool got_map_ = false;
