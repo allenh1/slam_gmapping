@@ -16,6 +16,5 @@
 
   <export>
     <build_type>ament_cmake</build_type>
-    <metapackage/>
   </export>
 </package>
