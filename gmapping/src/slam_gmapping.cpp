@@ -118,7 +118,7 @@ SlamGMapping::SlamGMapping(std::shared_ptr<rclcpp::Node> _node)
 {
   tfB_ = std::make_unique<tf2_ros::TransformBroadcaster>(node);
   auto tf_node = rclcpp::Node::make_shared("gmapping_tf");
-  clock = std::make_shared<rclcpp::Clock>(RCL_SYSTEM_TIME);
+  clock = std::make_shared<rclcpp::Clock>(RCL_ROS_TIME);
   timesource.attachClock(clock);
   buffer = std::make_unique<tf2_ros::Buffer>(clock);
   /* buffer->setUsingDedicatedThread(true); */
