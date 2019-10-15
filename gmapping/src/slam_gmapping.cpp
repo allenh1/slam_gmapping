@@ -203,10 +203,7 @@ void SlamGMapping::init()
 
 void SlamGMapping::startLiveSlam()
 {
-  rmw_qos_profile_t qos = rmw_qos_profile_default;
-  qos.depth = 1;
-  qos.durability = RMW_QOS_POLICY_DURABILITY_TRANSIENT_LOCAL;
-
+  rclcpp::QoS qos{rclcpp::QoS(1).transient_local()};
   /* create publishers */
   entropy_publisher_ = node->create_publisher<std_msgs::msg::Float64>("entropy", qos);
   sst_ = node->create_publisher<nav_msgs::msg::OccupancyGrid>("map", qos);
@@ -216,10 +213,8 @@ void SlamGMapping::startLiveSlam()
     "dynamic_map",
     std::bind(&SlamGMapping::mapCallback, this, std::placeholders::_1, std::placeholders::_2));
   /* create subscribers */
-  qos = rmw_qos_profile_default;
-  qos.depth = 5;
   scan_filter_sub_ = node->create_subscription<sensor_msgs::msg::LaserScan>(
-    "scan", std::bind(&SlamGMapping::laserCallback, this, std::placeholders::_1), qos);
+    "scan", qos, std::bind(&SlamGMapping::laserCallback, this, std::placeholders::_1));
 
   /*
    * TODO(allenh1): re-enable message filters
