@@ -59,13 +59,13 @@
 #include <mutex>
 #include <ctime>
 
-class SlamGMapping
+class SlamGMapping : public rclcpp::Node
 {
 public:
-  SlamGMapping(std::shared_ptr<rclcpp::Node> _node);
+  explicit SlamGMapping(const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
   /* SlamGMapping(ros::NodeHandle& nh, ros::NodeHandle& pnh); */
   /* SlamGMapping(unsigned long int seed, unsigned long int max_duration_buffer); */
-  ~SlamGMapping();
+  ~SlamGMapping() override;
 
   void init();
   void startLiveSlam();
@@ -82,12 +82,11 @@ private:
   rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr sst_;
   rclcpp::Publisher<nav_msgs::msg::MapMetaData>::SharedPtr sstm_;
   rclcpp::Service<nav_msgs::srv::GetMap>::SharedPtr ss_;
-  rclcpp::TimeSource timesource;
-  rclcpp::Clock::SharedPtr clock;
   std::unique_ptr<tf2_ros::Buffer> buffer = nullptr;
   std::unique_ptr<tf2_ros::TransformListener> tf_ = nullptr;
   /* message_filters::Subscriber<sensor_msgs::LaserScan>* scan_filter_sub_; */
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_filter_sub_;
+  rclcpp::Node::SharedPtr tf_node_;
   /* tf2_ros::MessageFilter<sensor_msgs::msg::LaserScan> * scan_filter_; */
   std::unique_ptr<tf2_ros::TransformBroadcaster> tfB_ = nullptr;
 
@@ -117,7 +116,7 @@ private:
   unsigned int laser_count_ = 0;
   unsigned int throttle_scans_;
 
-  std::thread * transform_thread_ = nullptr;
+  rclcpp::TimerBase::SharedPtr m_timer;
 
   std::string base_frame_;
   std::string laser_frame_;
@@ -162,8 +161,6 @@ private:
   double llsamplestep_;
   double lasamplerange_;
   double lasamplestep_;
-
-  std::shared_ptr<rclcpp::Node> node;
 
   unsigned long int seed_ = time(nullptr);
 

@@ -113,38 +113,33 @@ Initial map dimensions and resolution:
 // compute linear index for given map coords
 #define MAP_IDX(sx, i, j) ((sx) * (j) + (i))
 
-SlamGMapping::SlamGMapping(std::shared_ptr<rclcpp::Node> _node)
-: timesource(_node), node(_node)
+SlamGMapping::SlamGMapping(const rclcpp::NodeOptions & options)
+: rclcpp::Node("slam_gmapping", options)
 {
-  tfB_ = std::make_unique<tf2_ros::TransformBroadcaster>(node);
-  auto tf_node = rclcpp::Node::make_shared("gmapping_tf");
-  clock = std::make_shared<rclcpp::Clock>(RCL_ROS_TIME);
-  timesource.attachClock(clock);
-  buffer = std::make_unique<tf2_ros::Buffer>(clock);
+  tfB_ = std::make_unique<tf2_ros::TransformBroadcaster>(this);
+  buffer = std::make_unique<tf2_ros::Buffer>(this->get_clock());
   /* buffer->setUsingDedicatedThread(true); */
-  tf_ = std::make_unique<tf2_ros::TransformListener>(*buffer, tf_node, true);
+  tf_node_ = std::make_shared<rclcpp::Node>("slam_gmapping_tf", options);
+  tf_ = std::make_unique<tf2_ros::TransformListener>(*buffer, tf_node_, true);
   map_to_odom_.setIdentity();
 
   seed_ = time(NULL);
 
   gsp_ = new GMapping::GridSlamProcessor(std::cerr);
   if (!gsp_) {
-    RCUTILS_LOG_FATAL("Failed to allocate GridSlamProcessor!");
+    RCLCPP_ERROR(this->get_logger(), "Failed to allocate GridSlamProcessor!");
     exit(1);
   } else if (!tfB_) {
-    RCUTILS_LOG_FATAL("Failed to allocate transform buffer!");
+    RCLCPP_ERROR(this->get_logger(), "Failed to allocate transform buffer!");
     exit(2);
   }
 
   init();
+  startLiveSlam();
 }
 
 SlamGMapping::~SlamGMapping()
 {
-  if (transform_thread_) {
-    transform_thread_->join();
-  }
-
   delete gsp_;
   if (gsp_laser_) {
     delete gsp_laser_;
@@ -158,62 +153,62 @@ void SlamGMapping::init()
   // The library is pretty chatty
   //gsp_ = new GMapping::GridSlamProcessor(std::cerr);
   // Parameters used by our GMapping wrapper
-  node->get_parameter_or("throttle_scans", throttle_scans_, 1u);
-  node->get_parameter_or("base_frame", base_frame_, std::string("base_link"));
-  node->get_parameter_or("map_frame", map_frame_, std::string("map"));
-  node->get_parameter_or("odom_frame", odom_frame_, std::string("odom"));
+  throttle_scans_ = this->declare_parameter("throttle_scans", 1);
+  base_frame_ = this->declare_parameter("base_frame", std::string("base_link"));
+  map_frame_ = this->declare_parameter("map_frame", std::string("map"));
+  odom_frame_ = this->declare_parameter("odom_frame", std::string("odom"));
 
-  node->get_parameter_or("transform_publish_period", transform_publish_period_, 0.05);
+  transform_publish_period_ = this->declare_parameter("transform_publish_period", 0.05);
 
   double tmp;
-  node->get_parameter_or("map_update_interval", tmp, 5.0);
+  tmp = this->declare_parameter("map_update_interval",  5.0);
   map_update_interval_ = tf2::durationFromSec(tmp);
 
   // Parameters used by GMapping itself
   maxUrange_ = 0.0;  maxRange_ = 0.0; // preliminary default, will be set in initMapper()
-  node->get_parameter_or("minimumScore", minimum_score_, 0.0);
-  node->get_parameter_or("sigma", sigma_, 0.05);
-  node->get_parameter_or("kernelSize", kernelSize_, 1);
-  node->get_parameter_or("lstep", lstep_, 0.05);
-  node->get_parameter_or("astep", astep_, 0.05);
-  node->get_parameter_or("iterations", iterations_, 5);
-  node->get_parameter_or("lsigma", lsigma_, 0.075);
-  node->get_parameter_or("ogain", ogain_, 3.0);
-  node->get_parameter_or("lskip", lskip_, 0);
-  node->get_parameter_or("srr", srr_, 0.1);
-  node->get_parameter_or("srt", srt_, 0.2);
-  node->get_parameter_or("str", str_, 0.1);
-  node->get_parameter_or("stt", stt_, 0.2);
-  node->get_parameter_or("linearUpdate", linearUpdate_, 1.0);
-  node->get_parameter_or("angularUpdate", angularUpdate_, 0.5);
-  node->get_parameter_or("temporalUpdate", temporalUpdate_, -1.0);
-  node->get_parameter_or("resampleThreshold", resampleThreshold_, 0.5);
-  node->get_parameter_or("particles", particles_, 30);
-  node->get_parameter_or("xmin", xmin_, -100.0);
-  node->get_parameter_or("ymin", ymin_, -100.0);
-  node->get_parameter_or("xmax", xmax_, 100.0);
-  node->get_parameter_or("ymax", ymax_, 100.0);
-  node->get_parameter_or("delta", delta_, 0.05);
-  node->get_parameter_or("occ_thresh", occ_thresh_, 0.25);
-  node->get_parameter_or("llsamplerange", llsamplerange_, 0.01);
-  node->get_parameter_or("lasamplerange", lasamplerange_, 0.005);
-  node->get_parameter_or("lasamplestep", lasamplestep_, 0.005);
-  node->get_parameter_or("tf_delay", tf_delay_, transform_publish_period_);
+  minimum_score_ = this->declare_parameter("minimumScore", 0.0);
+  sigma_ = this->declare_parameter("sigma", 0.05);
+  kernelSize_ = this->declare_parameter("kernelSize", 1);
+  lstep_ = this->declare_parameter("lstep", 0.05);
+  astep_ = this->declare_parameter("astep", 0.05);
+  iterations_ = this->declare_parameter("iterations", 5);
+  lsigma_ = this->declare_parameter("lsigma", 0.075);
+  ogain_ = this->declare_parameter("ogain", 3.0);
+  lskip_ = this->declare_parameter("lskip", 0);
+  srr_ = this->declare_parameter("srr", 0.1);
+  srt_ = this->declare_parameter("srt", 0.2);
+  str_ = this->declare_parameter("str", 0.1);
+  stt_ = this->declare_parameter("stt", 0.2);
+  linearUpdate_ = this->declare_parameter("linearUpdate", 1.0);
+  angularUpdate_ = this->declare_parameter("angularUpdate", 0.5);
+  temporalUpdate_ = this->declare_parameter("temporalUpdate", -1.0);
+  resampleThreshold_ = this->declare_parameter("resampleThreshold", 0.5);
+  particles_ = this->declare_parameter("particles", 30);
+  xmin_ = this->declare_parameter("xmin", -100.0);
+  ymin_ = this->declare_parameter("ymin", -100.0);
+  xmax_ = this->declare_parameter("xmax", 100.0);
+  ymax_ = this->declare_parameter("ymax", 100.0);
+  delta_ = this->declare_parameter("delta", 0.05);
+  occ_thresh_ = this->declare_parameter("occ_thresh", 0.25);
+  llsamplerange_ = this->declare_parameter("llsamplerange", 0.01);
+  lasamplerange_ = this->declare_parameter("lasamplerange", 0.005);
+  lasamplestep_ = this->declare_parameter("lasamplestep", 0.005);
+  tf_delay_ = this->declare_parameter("tf_delay", transform_publish_period_);
 }
 
 void SlamGMapping::startLiveSlam()
 {
-  rclcpp::QoS qos{rclcpp::QoS(1).transient_local()};
   /* create publishers */
-  entropy_publisher_ = node->create_publisher<std_msgs::msg::Float64>("entropy", qos);
-  sst_ = node->create_publisher<nav_msgs::msg::OccupancyGrid>("map", qos);
-  sstm_ = node->create_publisher<nav_msgs::msg::MapMetaData>("map_metadata", qos);
+  entropy_publisher_ = this->create_publisher<std_msgs::msg::Float64>("entropy", 1);
+  sst_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>("map", 1);
+  sstm_ = this->create_publisher<nav_msgs::msg::MapMetaData>("map_metadata", 1);
   /* create services */
-  ss_ = node->create_service<nav_msgs::srv::GetMap>(
+  ss_ = this->create_service<nav_msgs::srv::GetMap>(
     "dynamic_map",
     std::bind(&SlamGMapping::mapCallback, this, std::placeholders::_1, std::placeholders::_2));
   /* create subscribers */
-  scan_filter_sub_ = node->create_subscription<sensor_msgs::msg::LaserScan>(
+  rclcpp::QoS qos{rclcpp::QoS(1).durability_volatile()};
+  scan_filter_sub_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
     "scan", qos, std::bind(&SlamGMapping::laserCallback, this, std::placeholders::_1));
 
   /*
@@ -223,8 +218,9 @@ void SlamGMapping::startLiveSlam()
   // scan_filter_ = new tf::MessageFilter<sensor_msgs::LaserScan>(*scan_filter_sub_, tf_, odom_frame_, 5);
   // scan_filter_->registerCallback(std::bind(&SlamGMapping::laserCallback, this, std::placeholders::_1));
   /* create the transform thread */
-  transform_thread_ =
-    new std::thread(std::bind(&SlamGMapping::publishLoop, this, transform_publish_period_));
+  auto converted =
+    std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::duration<double>(transform_publish_period_));
+  m_timer = this->create_wall_timer(converted, std::bind(&SlamGMapping::publishTransform, this));
 }
 
 /*
@@ -233,7 +229,7 @@ void SlamGMapping::startLiveSlam()
 void SlamGMapping::startReplay(const std::string & bag_fname, std::string scan_topic)
 {
   if (!bag_fname.size() || !scan_topic.size()) { /* Shut up, GCC */
-    RCUTILS_LOG_ERROR("bag name or scan_topic cannot be empty!");
+    RCLCPP_ERROR(this->get_logger(), "bag name or scan_topic cannot be empty!");
   }
   throw std::runtime_error("The SlamGMapping::startReplay function has not been implemented yet");
 //   double transform_publish_period;
@@ -308,11 +304,11 @@ void
 SlamGMapping::publishLoop(double transform_publish_period)
 {
   if (transform_publish_period == 0) {
-    std::cerr << "WARNING: transform_publish_period set to zero!" << std::endl;
+    RCLCPP_WARN(this->get_logger(), "transform_publish_period set to zero!");
     return;
   }
 
-  rclcpp::Rate r(1.0 / transform_publish_period);
+  rclcpp::Rate r{1.0 / transform_publish_period};
   while (rclcpp::ok()) {
     publishTransform();
     r.sleep();
@@ -331,15 +327,14 @@ SlamGMapping::getOdomPose(GMapping::OrientedPoint & gmap_pose, const auto & t)
   geometry_msgs::msg::TransformStamped odom_pose_msg;
   try {
     buffer->transform(
-      tf2::toMsg<tf2::Stamped<tf2::Transform>,
-      geometry_msgs::msg::TransformStamped>(centered_laser_pose_),
+      tf2::toMsg(centered_laser_pose_),
       odom_pose_msg,
       odom_frame_,
       tf2::durationFromSec(0.4)
     );
     tf2::fromMsg(odom_pose_msg, odom_pose);
   } catch (tf2::TransformException & e) {
-    RCUTILS_LOG_WARN("Failed to compute odom pose, skipping scan (%s)\n", e.what());
+    RCLCPP_WARN(this->get_logger(), "Failed to compute odom pose, skipping scan (%s)\n", e.what());
     std::vector<std::string> frames;
     frames.push_back("base_scan");
     frames.push_back("base_link");
@@ -387,14 +382,14 @@ SlamGMapping::initMapper(const std::shared_ptr<sensor_msgs::msg::LaserScan> scan
   try {
     geometry_msgs::msg::TransformStamped laser_pose_msg;
     buffer->transform(
-      tf2::toMsg<tf2::Stamped<tf2::Transform>, geometry_msgs::msg::TransformStamped>(ident),
+      tf2::toMsg(ident),
       laser_pose_msg,
       base_frame_,
       tf2::durationFromSec(0.4)
     );
     tf2::fromMsg(laser_pose_msg, laser_pose);
   } catch (tf2::TransformException & e) {
-    RCUTILS_LOG_WARN("Failed to compute laser pose, aborting initialization (%s)\n",
+    RCLCPP_WARN(this->get_logger(), "Failed to compute laser pose, aborting initialization (%s)\n",
       e.what());
     return false;
   }
@@ -408,16 +403,16 @@ SlamGMapping::initMapper(const std::shared_ptr<sensor_msgs::msg::LaserScan> scan
 
   try {
     buffer->transform(up, up, laser_frame_);
-    RCUTILS_LOG_DEBUG("Z-Axis in sensor frame: %.3f\n", up.point.z);
+    RCLCPP_DEBUG(this->get_logger(), "Z-Axis in sensor frame: %.3f\n", up.point.z);
   } catch (tf2::TransformException & e) {
-    RCUTILS_LOG_WARN("Unable to determine orientation of laser: %s\n",
+    RCLCPP_WARN(this->get_logger(), "Unable to determine orientation of laser: %s\n",
       e.what());
     return false;
   }
 
   // gmapping doesnt take roll or pitch into account. So check for correct sensor alignment.
   if (std::fabs(std::fabs(up.point.z) - 1) > 0.001) {
-    RCUTILS_LOG_WARN(
+    RCLCPP_WARN(this->get_logger(), 
       "Laser has to be mounted planar! Z-coordinate has to be 1 or -1, but gave: %.5f\n",
       up.point.z);
     return false;
@@ -431,18 +426,18 @@ SlamGMapping::initMapper(const std::shared_ptr<sensor_msgs::msg::LaserScan> scan
     do_reverse_range_ = scan->angle_min > scan->angle_max;
     tf2::Quaternion q;
     q.setRPY(0.0, 0.0, angle_center);
-    auto time_stamp = tf2_ros::fromMsg(clock->now());
+    auto time_stamp = tf2_ros::fromMsg(this->now());
     centered_laser_pose_ = tf2::Stamped<tf2::Transform>(
       tf2::Transform(q, tf2::Vector3(0, 0, 0)), time_stamp, laser_frame_);
-    RCUTILS_LOG_INFO("Laser is mounted upwards.\n");
+    RCLCPP_INFO(this->get_logger(), "Laser is mounted upwards.\n");
   } else {
     tf2::Quaternion q;
     q.setRPY(M_PI, 0, -angle_center);
     do_reverse_range_ = scan->angle_min < scan->angle_max;
-    auto time_stamp = tf2_ros::fromMsg(clock->now());
+    auto time_stamp = tf2_ros::fromMsg(this->now());
     centered_laser_pose_ = tf2::Stamped<tf2::Transform>(
       tf2::Transform(q, tf2::Vector3(0, 0, 0)), time_stamp, laser_frame_);
-    RCUTILS_LOG_INFO("Laser is mounted upside down.\n");
+    RCLCPP_INFO(this->get_logger(), "Laser is mounted upside down.\n");
   }
 
   // Compute the angles of the laser from -x to x, basically symmetric and in increasing order
@@ -457,16 +452,16 @@ SlamGMapping::initMapper(const std::shared_ptr<sensor_msgs::msg::LaserScan> scan
     theta += std::fabs(scan->angle_increment);
   }
 
-  RCUTILS_LOG_INFO("Laser angles in laser-frame: min: %.3f max: %.3f inc: %.3f\n",
+  RCLCPP_INFO(this->get_logger(), "Laser angles in laser-frame: min: %.3f max: %.3f inc: %.3f\n",
     scan->angle_min, scan->angle_max, scan->angle_increment);
-  RCUTILS_LOG_INFO("Laser angles in top-down centered laser-frame: min: %.3f max: %.3f inc: %.3f\n",
+  RCLCPP_INFO(this->get_logger(), "Laser angles in top-down centered laser-frame: min: %.3f max: %.3f inc: %.3f\n",
     laser_angles_.front(), laser_angles_.back(), std::fabs(scan->angle_increment));
 
   GMapping::OrientedPoint gmap_pose(0, 0, 0);
 
   // setting maxRange and maxUrange here so we can set a reasonable default
-  node->get_parameter_or("maxRange", maxRange_, scan->range_max - 0.01);
-  node->get_parameter_or("maxUrange", maxUrange_, maxRange_);
+  maxRange_ = this->declare_parameter("maxRange", scan->range_max - 0.01);
+  maxUrange_ = this->declare_parameter("maxUrange", maxRange_);
 
   // The laser must be called "FLASER".
   // We pass in the absolute value of the computed angle increment, on the
@@ -491,7 +486,7 @@ SlamGMapping::initMapper(const std::shared_ptr<sensor_msgs::msg::LaserScan> scan
   GMapping::OrientedPoint initialPose;
 
   if (!getOdomPose(initialPose, scan->header.stamp)) {
-    RCUTILS_LOG_WARN(
+    RCLCPP_WARN(this->get_logger(), 
       "Unable to determine inital pose of laser! Starting point will be set to zero.\n");
     initialPose = GMapping::OrientedPoint(0.0, 0.0, 0.0);
   }
@@ -517,7 +512,7 @@ SlamGMapping::initMapper(const std::shared_ptr<sensor_msgs::msg::LaserScan> scan
   // Call the sampling function once to set the seed.
   GMapping::sampleGaussian(1, seed_);
 
-  RCUTILS_LOG_INFO("Initialization complete\n");
+  RCLCPP_INFO(this->get_logger(), "Initialization complete\n");
 
   return true;
 }
@@ -528,12 +523,12 @@ SlamGMapping::addScan(
   GMapping::OrientedPoint & gmap_pose)
 {
   if (!getOdomPose(gmap_pose, scan->header.stamp)) {
-    RCUTILS_LOG_ERROR("Error: getOdomPose failed!");
+    RCLCPP_ERROR(this->get_logger(), "Error: getOdomPose failed!");
     return false;
   }
 
   if (scan->ranges.size() != gsp_laser_beam_count_) {
-    RCUTILS_LOG_ERROR("Error: scan->ranges.size() != gsp_laser_beam_count_!");
+    RCLCPP_ERROR(this->get_logger(), "Error: scan->ranges.size() != gsp_laser_beam_count_!");
     return false;
   }
 
@@ -542,7 +537,7 @@ SlamGMapping::addScan(
   double * ranges_double = new double[num_ranges];
   // If the angle increment is negative, we have to invert the order of the readings.
   if (do_reverse_range_) {
-    RCUTILS_LOG_DEBUG("Inverting scan\n");
+    RCLCPP_DEBUG(this->get_logger(), "Inverting scan\n");
     for (size_t i = 0; i < num_ranges; i++) {
       // Must filter out short readings, because the mapper won't
       ranges_double[i] = (scan->ranges[num_ranges - i - 1] < scan->range_min) ?
@@ -571,18 +566,18 @@ SlamGMapping::addScan(
 
   reading.setPose(gmap_pose);
 
-  RCUTILS_LOG_DEBUG("scanpose (%.3f): %.3f %.3f %.3f\n",
+  RCLCPP_DEBUG(this->get_logger(), "scanpose (%.3f): %.3f %.3f %.3f\n",
     scan->header.stamp.sec +
     scan->header.stamp.nanosec * 1.0e-6,
     gmap_pose.x,
     gmap_pose.y,
     gmap_pose.theta);
 
-  RCUTILS_LOG_DEBUG("processing scan\n");
+  RCLCPP_DEBUG(this->get_logger(), "processing scan\n");
   bool ret = gsp_->processScan(reading);
   if (!ret) {
     /* Is this the value to check? Could it be true? */
-    RCUTILS_LOG_ERROR("gsp->processScan(reading); failed!");
+    RCLCPP_ERROR(this->get_logger(), "gsp->processScan(reading); failed!");
   }
   return ret;
 }
@@ -617,12 +612,12 @@ SlamGMapping::laserCallback(const std::shared_ptr<sensor_msgs::msg::LaserScan> s
   GMapping::OrientedPoint odom_pose;
 
   if (addScan(scan, odom_pose)) {
-    RCUTILS_LOG_DEBUG("scan processed\n");
+    RCLCPP_DEBUG(this->get_logger(), "scan processed\n");
 
     GMapping::OrientedPoint mpose = gsp_->getParticles()[gsp_->getBestParticleIndex()].pose;
-    RCUTILS_LOG_DEBUG("new best pose: %.3f %.3f %.3f\n", mpose.x, mpose.y, mpose.theta);
-    RCUTILS_LOG_DEBUG("odom pose: %.3f %.3f %.3f\n", odom_pose.x, odom_pose.y, odom_pose.theta);
-    RCUTILS_LOG_DEBUG("correction: %.3f %.3f %.3f\n", mpose.x - odom_pose.x, mpose.y - odom_pose.y,
+    RCLCPP_DEBUG(this->get_logger(), "new best pose: %.3f %.3f %.3f\n", mpose.x, mpose.y, mpose.theta);
+    RCLCPP_DEBUG(this->get_logger(), "odom pose: %.3f %.3f %.3f\n", odom_pose.x, odom_pose.y, odom_pose.theta);
+    RCLCPP_DEBUG(this->get_logger(), "correction: %.3f %.3f %.3f\n", mpose.x - odom_pose.x, mpose.y - odom_pose.y,
       mpose.theta - odom_pose.theta);
 
     tf2::Quaternion mpose_q, odom_q;
@@ -642,10 +637,10 @@ SlamGMapping::laserCallback(const std::shared_ptr<sensor_msgs::msg::LaserScan> s
     if (!got_map_ || (stamp_time - last_map_update) > map_update_interval_) {
       updateMap(scan);
       last_map_update = tf2_ros::fromMsg(scan->header.stamp);
-      RCUTILS_LOG_DEBUG("Updated the map\n");
+      RCLCPP_DEBUG(this->get_logger(), "Updated the map\n");
     }
   } else {
-    RCUTILS_LOG_DEBUG("cannot process scan\n");
+    RCLCPP_DEBUG(this->get_logger(), "cannot process scan\n");
   }
 }
 
@@ -669,7 +664,7 @@ SlamGMapping::computePoseEntropy()
 void
 SlamGMapping::updateMap(const std::shared_ptr<sensor_msgs::msg::LaserScan> scan)
 {
-  RCUTILS_LOG_DEBUG("Update map\n");
+  RCLCPP_DEBUG(this->get_logger(), "Update map\n");
   std::lock_guard<std::mutex> map_lock(map_mutex_);
   GMapping::ScanMatcher matcher;
 
@@ -705,14 +700,14 @@ SlamGMapping::updateMap(const std::shared_ptr<sensor_msgs::msg::LaserScan> scan)
 
   GMapping::ScanMatcherMap smap(center, xmin_, ymin_, xmax_, ymax_, delta_);
 
-  RCUTILS_LOG_DEBUG("Trajectory tree:\n");
+  RCLCPP_DEBUG(this->get_logger(), "Trajectory tree:\n");
   for (auto n = best.node; n; n = n->parent) {
-    RCUTILS_LOG_DEBUG("  %.3f %.3f %.3f\n",
+    RCLCPP_DEBUG(this->get_logger(), "  %.3f %.3f %.3f\n",
       n->pose.x,
       n->pose.y,
       n->pose.theta);
     if (!n->reading) {
-      RCUTILS_LOG_DEBUG("Reading is NULL\n");
+      RCLCPP_DEBUG(this->get_logger(), "Reading is NULL\n");
       continue;
     }
     matcher.invalidateActiveArea();
@@ -733,7 +728,7 @@ SlamGMapping::updateMap(const std::shared_ptr<sensor_msgs::msg::LaserScan> scan)
     xmin_ = wmin.x; ymin_ = wmin.y;
     xmax_ = wmax.x; ymax_ = wmax.y;
 
-    RCUTILS_LOG_DEBUG("map size is now %dx%d pixels (%f,%f)-(%f, %f)\n",
+    RCLCPP_DEBUG(this->get_logger(), "map size is now %dx%d pixels (%f,%f)-(%f, %f)\n",
       smap.getMapSizeX(), smap.getMapSizeY(),
       xmin_, ymin_, xmax_, ymax_);
 
@@ -743,7 +738,7 @@ SlamGMapping::updateMap(const std::shared_ptr<sensor_msgs::msg::LaserScan> scan)
     map_.map.info.origin.position.y = ymin_;
     map_.map.data.resize(map_.map.info.width * map_.map.info.height);
 
-    RCUTILS_LOG_DEBUG("map origin: (%f, %f)\n", map_.map.info.origin.position.x,
+    RCLCPP_DEBUG(this->get_logger(), "map origin: (%f, %f)\n", map_.map.info.origin.position.x,
       map_.map.info.origin.position.y);
   }
 
@@ -768,7 +763,7 @@ SlamGMapping::updateMap(const std::shared_ptr<sensor_msgs::msg::LaserScan> scan)
   got_map_ = true;
 
   //make sure to set the header information on the map
-  map_.map.header.stamp = clock->now();
+  map_.map.header.stamp = this->now();
   map_.map.header.frame_id = map_frame_;
 
   sst_->publish(map_.map);
@@ -791,7 +786,7 @@ SlamGMapping::mapCallback(
 void SlamGMapping::publishTransform()
 {
   map_to_odom_mutex_.lock();
-  auto tf_expiration = tf2_ros::fromMsg(clock->now()) + tf2::durationFromSec(tf_delay_);
+  auto tf_expiration = tf2_ros::fromMsg(this->now()) + tf2::durationFromSec(tf_delay_);
   geometry_msgs::msg::TransformStamped tmp_tf_stamped;
   tmp_tf_stamped.header.frame_id = map_frame_;
   tmp_tf_stamped.child_frame_id = odom_frame_;
